@@ -3,6 +3,9 @@ import { Order } from '../../../db/model/order.model.js';
 import { handleAsycError } from '../../middleware/handleAsyncError.js';
 import { Product } from './../../../db/model/product.model.js';
 import Stripe from 'stripe';
+import express from 'express'
+import AppError from '../../utilites/AppError.js';
+import { User } from '../../../db/model/user.model.js';
 const stripe = new Stripe('sk_test_51Q45HsI1MerWDsCTzK3v2cPJbDOnUcKOehy8DB8fCgH1oLYPrwyjNhZqv46OdkJbewzKBe5Pb8NiwWjWkVnokD3B00yCitaKJg');
 
 
@@ -74,12 +77,9 @@ metadata:req.body.shippingAddress
   })
 
 
-
-const createOnlineOrder= handleAsycError(async(req,res,next)=>{
-    
    const app = express();
 
-app.post('/webhook', express.raw({type: 'application/json'}), (req, res) => {
+ const createOnlineOrder= handleAsycError(async(req, res,next) => {
 const sig = req.headers['stripe-signature'];
 let event;
 try {
@@ -91,8 +91,35 @@ event =stripe.webhooks.constructEvent(req.body, sig, "whsec_7sda9ZMTuB0z3IM26j1B
 
 
 if(event.type== "checkout.session. completed"){
-  const checkoutSessionCompleted = event.data.object;
-console.log("Done")
+  const e = event.data.object;
+  let cart = await Cart.findById(e.client_reference_id)
+  if(!cart) next(new AppError("No valid Cart",400))
+
+    let user = await User.findOne({email:e.customer_email})
+    if(!cart) next(new AppError("No valid Cart",400))
+
+  let order= new Order({
+    user:user._id,
+    cartItems:cart.cartItems,
+    totalPrice:e.amount_total / 100,
+    shippingAddress: e.metadata,
+    paymentMethod:"card",
+    isPaid:true,
+    paidAt:Date.now()
+    
+  })
+  await order.save()
+
+let options= cart.cartItems.map(item=>({
+  updateOne:{
+    filter:{_id:item.product},
+    update:{$inc:{quantity:-item.quantity,sold:item.quantity}},
+
+  },
+}))
+await Product.bulkWrite(options);
+await Cart.findByIdAndDelete(req.params.id)
+
 }else{
 console.log(`Unhandled event type ${event.type}`)
 
@@ -102,9 +129,9 @@ console.log(`Unhandled event type ${event.type}`)
 res.json({message:"Done"});
 
   });
-  app.listen(4242,()=> console.log('Running on port 4242'));
+  
 
-});
+
 
 export {
   createCashOrder,
